@@ -7,3 +7,13 @@ The project explores a simple architecture for competitive multiplayer games suc
 Actors use lightweight Attachments and Attributes to represent gameplay information such as movement intent, health, states, abilities, or other character data.
 
 This repository is primarily a reference implementation and testbed rather than a complete drop-in character framework.
+
+## References
+
+Some ideas explored in this project were informed by Roblox Server Authority documentation, community experiments, and talks.
+
+* **Server Authoritative API testing: Fighting Game Framework** — CasuallyCritical
+  Related community experimentation with predicted Actors, Attachments/Attributes, and remote character presentation using Roblox Server Authority.
+
+* **Server Authority: Powering Competitive Gameplay (feat. ev1) | Inspire 2026** — Roblox Learn
+  Official Roblox talk covering Server Authority, prediction, and architecture for responsive competitive gameplay.
