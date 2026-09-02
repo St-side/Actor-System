@@ -1,0 +1,32 @@
+{
+  "name": "ActorSystem",
+  "emitLegacyScripts": false,
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$ignoreUnknownInstances": true,
+      "Actor": {
+        "$path": "src/shared/Actor"
+      },
+      "PresentationRig": {
+        "$path": "src/shared/PresentationRig.rbxm"
+      }
+    },
+
+    "Players": {
+      "$properties": {
+        "CharacterAutoLoads": false
+      }
+    },
+
+    "Workspace": {
+      "$ignoreUnknownInstances": true,
+      "$properties": {
+        "AuthorityMode": "Server",
+        "FilteringEnabled": true,
+        "StreamingEnabled": true
+      }
+    }
+  }
+}
