@@ -8,6 +8,20 @@ Actors use lightweight Attachments and Attributes to represent gameplay informat
 
 This repository is primarily a reference implementation and testbed rather than a complete drop-in character framework.
 
+## Gameplay
+
+Actor-System currently demonstrates a minimal third-person character controller built around Roblox Server Authority.
+
+* Camera-relative WASD / gamepad movement
+* Camera-driven character facing
+* Jumping and gravity
+* Player collision
+* Idle, run, jump, and fall animations
+* Client-side character presentation
+* Predicted local movement with server-authoritative simulation
+
+The gameplay is intentionally simple—the project is focused on experimenting with the underlying character simulation and presentation architecture rather than building a complete game.
+
 ## References
 
 Some ideas explored in this project were informed by Roblox Server Authority documentation, community experiments, and talks.
