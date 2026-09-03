@@ -22,7 +22,7 @@ local Config = {
 	}),
 
 	Presentation = table.freeze({
-		FolderName = "Presentation",
+		FolderName = "_ActorPresentation",
 		RigAssetName = "PresentationRig",
 	}),
 

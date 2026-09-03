@@ -215,22 +215,10 @@ function Simulation.Setup()
 	if IS_SERVER then
 		Players.CharacterAutoLoads = false
 
-		-- invisible server copy still provides physical collision
-		local physicalBaseplate = workspace:FindFirstChild(Config.BaseplateAssetName)
-		if not physicalBaseplate then
-			physicalBaseplate = ReplicatedStorage
-				:WaitForChild(Config.BaseplateAssetName)
-				:Clone()
-			physicalBaseplate.Parent = workspace
-		end
-		if physicalBaseplate:IsA("BasePart") then
-			physicalBaseplate.Transparency = 1
-		end
-		for _, descendant in physicalBaseplate:GetDescendants() do
-			if descendant:IsA("BasePart") then
-				descendant.Transparency = 1
-			end
-		end
+		local baseplate = ReplicatedStorage
+			:WaitForChild(Config.BaseplateAssetName)
+			:Clone()
+		baseplate.Parent = workspace
 
 		local players = workspace:FindFirstChild(Config.PlayersFolderName)
 		if not players then

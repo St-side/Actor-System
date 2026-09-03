@@ -53,23 +53,6 @@ local function configureRig(rig: Model)
 	end
 end
 
-local function configureVisual(asset: Instance)
-	local function configure(instance: Instance)
-		if instance:IsA("BasePart") then
-			instance.Anchored = true
-			instance.CanCollide = false
-			instance.CanTouch = false
-			instance.CanQuery = false
-		end
-	end
-
-	configure(asset)
-
-	for _, descendant in asset:GetDescendants() do
-		configure(descendant)
-	end
-end
-
 local function presentationCFrame(
 	actor: Attachment,
 	record: PresentationRecord,
@@ -165,31 +148,9 @@ function Presentation.Setup(playerFolder: Folder)
 	started = true
 
 	local presentationFolder = getOrCreateFolder(
-		playerFolder,
+		workspace,
 		Config.Presentation.FolderName
 	)
-
-	local renderVisuals =
-		getOrCreateFolder(workspace, "RenderVisuals")
-
-	local map =
-		getOrCreateFolder(renderVisuals, "Map")
-
-	local oldBaseplate =
-		map:FindFirstChild(Config.BaseplateAssetName)
-
-	if oldBaseplate then
-		oldBaseplate:Destroy()
-	end
-
-	local baseplate =
-		ReplicatedStorage
-			:WaitForChild(Config.BaseplateAssetName)
-			:Clone()
-
-	-- client map is visual only; the server keeps collision
-	configureVisual(baseplate)
-	baseplate.Parent = map
 
 	local function addCollider(collider: Instance)
 		if not collider:IsA("Part") then
