@@ -17,11 +17,13 @@ function Simulation.GroundCast(collider: BasePart): RaycastResult?
 	local rayParams = RaycastParams.new()
 	rayParams.ExcludeInstances = { collider }
 	rayParams.RespectCanCollide = true
+	local sphereRadius = 1.9
+	local castDistance = collider.Size.Y * 0.5 - sphereRadius
 
 	return workspace:Spherecast(
 		collider.Position,
-		1.9,
-		Vector3.new(0, -3, 0),
+		sphereRadius,
+		-Vector3.yAxis * castDistance,
 		rayParams
 	)
 end
@@ -63,6 +65,7 @@ function Simulation.CreateCharacter(player: Player)
 	actor.Name = Config.ActorName
 	actor:SetAttribute(Config.Attributes.UserId, player.UserId)
 	actor:SetAttribute(Config.Attributes.MoveVector, Vector3.zero)
+	actor:SetAttribute(Config.Attributes.IsGrounded, false)
 	actor.Parent = collider
 
 	collider.Parent = playerFolder
@@ -193,8 +196,11 @@ function Simulation.Step(deltaTime: number)
 
 		-- held jump can fire again once the collider is grounded
 		local groundCast = Simulation.GroundCast(collider)
+		local grounded = groundCast ~= nil
+		actor:SetAttribute(Config.Attributes.IsGrounded, grounded)
+
 		local jumpPressed = inputs.Jump:GetState() :: boolean
-		if groundCast and jumpPressed then
+		if grounded and jumpPressed then
 			local velocity = collider.AssemblyLinearVelocity
 			collider.AssemblyLinearVelocity = Vector3.new(
 				velocity.X,

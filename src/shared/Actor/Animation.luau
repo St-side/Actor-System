@@ -2,7 +2,6 @@
 
 local Config = require(script.Parent.Config)
 
-local FADE_TIME = 0.1
 local MOVING_THRESHOLD = 0.01
 
 local ASSET_IDS = table.freeze({
@@ -40,19 +39,6 @@ local function loadTrack(
 	animation:Destroy()
 
 	return track
-end
-
-local function isGrounded(collider: BasePart): boolean
-	local rayParams = RaycastParams.new()
-	rayParams.ExcludeInstances = { collider }
-	rayParams.RespectCanCollide = true
-
-	return workspace:Spherecast(
-		collider.Position,
-		1.9,
-		Vector3.new(0, -3, 0),
-		rayParams
-	) ~= nil
 end
 
 function Animation.Create(rig: Model): Record
@@ -102,12 +88,13 @@ function Animation.Update(
 		else Vector3.zero
 	local moving = moveVector.Magnitude > MOVING_THRESHOLD
 	local velocity = collider.AssemblyLinearVelocity
-	local grounded = isGrounded(collider)
+	local grounded =
+		actor:GetAttribute(Config.Attributes.IsGrounded) == true
 
 	local nextTrack: AnimationTrack
 
 	if not grounded then
-		nextTrack = if velocity.Y > 0.5
+		nextTrack = if velocity.Y > 0
 			then record.Jump
 			else record.Fall
 	else
@@ -121,10 +108,10 @@ function Animation.Update(
 	end
 
 	if record.Current and record.Current ~= nextTrack then
-		record.Current:Stop(FADE_TIME)
+		record.Current:Stop(0)
 	end
 
-	nextTrack:Play(FADE_TIME)
+	nextTrack:Play(0)
 	record.Current = nextTrack
 end
 

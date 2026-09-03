@@ -18,12 +18,12 @@ local Config = {
 	Attributes = table.freeze({
 		UserId = "UserId",
 		MoveVector = "MoveVector",
+		IsGrounded = "IsGrounded",
 	}),
 
 	Presentation = table.freeze({
 		FolderName = "Presentation",
 		RigAssetName = "PresentationRig",
-		RemotePositionSmoothTime = 0.05,
 	}),
 
 	Camera = table.freeze({

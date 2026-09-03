@@ -3,7 +3,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 
 local Animation = require(script.Parent.Animation)
 local Config = require(script.Parent.Config)
@@ -15,8 +14,6 @@ type PresentationRecord = {
 	Rig: Model,
 	Animation: Animation.Record,
 	IsLocal: boolean,
-	PresentedPosition: Vector3,
-	PositionVelocity: Vector3,
 }
 
 local Presentation = {}
@@ -144,8 +141,6 @@ local function createRig(
 		Rig = rig,
 		Animation = Animation.Create(rig),
 		IsLocal = userId == Players.LocalPlayer.UserId,
-		PresentedPosition = actor.WorldPosition,
-		PositionVelocity = Vector3.zero,
 	}
 
 	rig:PivotTo(
@@ -231,7 +226,7 @@ function Presentation.Setup(playerFolder: Folder)
 	RunService:BindToRenderStep(
 		"ActorLabPresentation",
 		Enum.RenderPriority.Last.Value,
-		function(deltaTime)
+		function()
 			for actor, record in records do
 				if not actor:IsDescendantOf(playerFolder) then
 					removeRig(actor)
@@ -244,20 +239,6 @@ function Presentation.Setup(playerFolder: Folder)
 				end
 
 				local position = actor.WorldPosition
-				if not record.IsLocal then
-					local velocity: Vector3
-					position, velocity = TweenService:SmoothDamp(
-						record.PresentedPosition,
-						position,
-						record.PositionVelocity,
-						Config.Presentation.RemotePositionSmoothTime,
-						math.huge,
-						deltaTime
-					)
-					record.PresentedPosition = position
-					record.PositionVelocity = velocity
-				end
-
 				record.Rig:PivotTo(
 					presentationCFrame(actor, record, position)
 				)
