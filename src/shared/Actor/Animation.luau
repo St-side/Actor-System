@@ -3,11 +3,10 @@
 local Config = require(script.Parent.Config)
 
 local MOVING_THRESHOLD = 0.01
+local FADE_TIME = 0.1
 
 local ASSET_IDS = table.freeze({
-	Idle1 = "rbxassetid://507766388",
-	Idle2 = "rbxassetid://507766951",
-	Idle3 = "rbxassetid://507766666",
+	Idle = "rbxassetid://507766388",
 	Run = "rbxassetid://507767714",
 	Jump = "rbxassetid://507765000",
 	Fall = "rbxassetid://507767968",
@@ -51,7 +50,7 @@ function Animation.Create(rig: Model): Record
 	return {
 		Idle = loadTrack(
 			animator,
-			ASSET_IDS.Idle1,
+			ASSET_IDS.Idle,
 			Enum.AnimationPriority.Idle,
 			true
 		),
@@ -79,28 +78,30 @@ end
 
 function Animation.Update(
 	record: Record,
-	actor: Attachment,
-	collider: BasePart
+	actor: Attachment
 )
 	local value = actor:GetAttribute(Config.Attributes.MoveVector)
 	local moveVector = if typeof(value) == "Vector3"
 		then value
 		else Vector3.zero
+
+	local velocity = actor:GetAttribute(Config.Attributes.Velocity)
+	if typeof(velocity) ~= "Vector3" then
+		return
+	end
+
 	local moving = moveVector.Magnitude > MOVING_THRESHOLD
-	local velocity = collider.AssemblyLinearVelocity
 	local grounded =
 		actor:GetAttribute(Config.Attributes.IsGrounded) == true
 
 	local nextTrack: AnimationTrack
 
-	if not grounded then
-		nextTrack = if velocity.Y > 0
-			then record.Jump
-			else record.Fall
+	if grounded then
+		nextTrack = if moving then record.Run else record.Idle
+	elseif velocity.Y > 0 then
+		nextTrack = record.Jump
 	else
-		nextTrack = if moving
-			then record.Run
-			else record.Idle
+		nextTrack = record.Fall
 	end
 
 	if record.Current == nextTrack and nextTrack.IsPlaying then
@@ -108,10 +109,10 @@ function Animation.Update(
 	end
 
 	if record.Current and record.Current ~= nextTrack then
-		record.Current:Stop(0)
+		record.Current:Stop(FADE_TIME)
 	end
 
-	nextTrack:Play(0)
+	nextTrack:Play(FADE_TIME)
 	record.Current = nextTrack
 end
 

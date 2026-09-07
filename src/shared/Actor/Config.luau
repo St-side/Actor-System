@@ -2,21 +2,17 @@
 
 local Config = {
 	PlayersFolderName = "Players",
-	ActorName = "Actor",
+	ActorPrefix = "Actor_",
 	BaseplateAssetName = "Baseplate",
 	MoveSpeed = 18,
 	JumpVelocity = 50,
 	SpawnSpacing = 8,
-	Collider = table.freeze({
-		Prefix = "Collider_",
-		Size = Vector3.new(2.5, 5.5, 2.5),
-		Transparency = 0.5,
-	}),
 	SimulationFrequency = Enum.StepFrequency.Hz60,
 	SimulationPriority = 2000,
 
 	Attributes = table.freeze({
 		UserId = "UserId",
+		Velocity = "Velocity",
 		MoveVector = "MoveVector",
 		IsGrounded = "IsGrounded",
 	}),

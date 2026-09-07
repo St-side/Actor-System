@@ -1,254 +1,227 @@
 --!strict
-
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-
-local Config = require(script.Parent.Config)
 local Input = require(script.Parent.Input)
+local Config = require(script.Parent.Config)
+
+local IS_SERVER = RunService:IsServer()
+local SIZE = Vector3.new(2.5, 5.5, 2.5)
+local GRAVITY = 196.2 -- Manual vertical acceleration for the kinematic Actor.
+local SKIN = 0.02 -- Clearance from world surfaces after a sweep hit.
+local GROUND_DISTANCE = 0.06 -- Downward support-query tolerance.
+local BODY_RADIUS = 1.25
+local SEPARATION_TOLERANCE = 0.001
+
+type Body = {
+	Player: Player,
+	Actor: Attachment,
+	Position: Vector3,
+	Rotation: CFrame,
+	Velocity: Vector3,
+	MoveVector: Vector3,
+}
 
 local Simulation = {}
-local IS_SERVER = RunService:IsServer()
-local playerFolder: Folder
-local nextSpawnSlot = 0
+local actors: Folder
+local spawnSlot = 0 -- Server lifecycle only, never movement/rollback state.
+local params = RaycastParams.new()
+params.RespectCanCollide = true
 
-function Simulation.GroundCast(collider: BasePart): RaycastResult?
-	local rayParams = RaycastParams.new()
-	rayParams.ExcludeInstances = { collider }
-	rayParams.RespectCanCollide = true
-	local sphereRadius = 1.9
-	local castDistance = collider.Size.Y * 0.5 - sphereRadius
-
-	return workspace:Spherecast(
-		collider.Position,
-		sphereRadius,
-		-Vector3.yAxis * castDistance,
-		rayParams
-	)
+local function getActor(player: Player): Attachment?
+	local actor = actors:FindFirstChild(Config.ActorPrefix .. player.UserId)
+	return if actor and actor:IsA("Attachment") then actor else nil
 end
 
-function Simulation.CreateCharacter(player: Player)
-	-- the server owns the physical character lifecycle
-	if not IS_SERVER then
+local function isGrounded(position: Vector3): boolean
+	local hit = workspace:Blockcast(CFrame.new(position), SIZE, -Vector3.yAxis * GROUND_DISTANCE, params)
+	return hit ~= nil and hit.Normal.Y > 0.5
+end
+
+local function sweep(position: Vector3, displacement: Vector3): (Vector3, boolean)
+	local distance = displacement.Magnitude
+	if distance == 0 then
+		return position, false
+	end
+	local hit = workspace:Blockcast(CFrame.new(position), SIZE, displacement, params)
+	if not hit then
+		return position + displacement, false
+	end
+	local allowedDistance = math.max(0, hit.Distance - SKIN)
+	return position + displacement.Unit * allowedDistance, true
+end
+
+local function computeMovement(body: Body, deltaTime: number): boolean
+	local inputs = Input.GetInputs(body.Player)
+	if not inputs then
+		return false
+	end
+	-- Only Y carries integration state forward; WASD does not consume previous X/Z.
+	local velocity = body.Velocity
+	local movement = inputs.Movement:GetState() :: Vector2
+	local jump = inputs.Jump:GetState() :: boolean
+
+	local look = body.Player:GetCameraState().CFrame.LookVector
+	local lookXZ = Vector3.new(look.X, 0, look.Z)
+	local forward = if lookXZ.Magnitude > 0 then lookXZ.Unit else -Vector3.zAxis
+	local facing = CFrame.lookAt(Vector3.zero, forward, Vector3.yAxis)
+	local moveVector = facing:VectorToWorldSpace(Vector3.new(movement.X, 0, -movement.Y))
+	body.MoveVector = moveVector
+
+	local position = body.Position
+	local grounded = velocity.Y <= 0 and isGrounded(position)
+	local velocityY = if grounded then 0 else velocity.Y
+	if grounded and jump then
+		velocityY = Config.JumpVelocity
+	else
+		velocityY -= GRAVITY * deltaTime
+	end
+
+	-- Consume current input immediately in this invocation, without an attribute round-trip.
+	local horizontalVelocity = moveVector * Config.MoveSpeed
+	local blocked: boolean
+	position, blocked = sweep(position, horizontalVelocity * deltaTime)
+	if blocked then
+		-- Stop the whole horizontal command at a wall; no sliding solver.
+		horizontalVelocity = Vector3.zero
+	end
+	position, blocked = sweep(position, Vector3.yAxis * velocityY * deltaTime)
+	if blocked then
+		velocityY = 0
+	end
+	body.Position = position
+	body.Rotation = facing.Rotation
+	body.Velocity = Vector3.new(horizontalVelocity.X, velocityY, horizontalVelocity.Z)
+	return true
+end
+
+local function resolvePair(a: Body, b: Body)
+	if math.abs(b.Position.Y - a.Position.Y) >= SIZE.Y then
 		return
 	end
-
-	local groundPosition = Vector3.new(
-		nextSpawnSlot * Config.SpawnSpacing,
-		0,
-		0
-	)
-	nextSpawnSlot += 1
-	local colliderPosition = groundPosition
-		+ Vector3.yAxis * (Config.Collider.Size.Y * 0.5)
-
-	local collider = Instance.new("Part")
-	collider.Name = Config.Collider.Prefix .. tostring(player.UserId)
-	collider.Size = Config.Collider.Size
-	collider.Transparency = Config.Collider.Transparency
-	collider.Anchored = false
-	collider.CanCollide = true
-	collider.CanQuery = true
-	collider.CanTouch = true
-	collider.CustomPhysicalProperties = PhysicalProperties.new(
-		0.7,
-		0.3,
-		0,
-		1,
-		100
-	)
-	collider.CFrame = CFrame.new(colliderPosition)
-
-	-- Actor stays at the collider center as the shared gameplay origin
-	local actor = Instance.new("Attachment")
-	actor.Name = Config.ActorName
-	actor:SetAttribute(Config.Attributes.UserId, player.UserId)
-	actor:SetAttribute(Config.Attributes.MoveVector, Vector3.zero)
-	actor:SetAttribute(Config.Attributes.IsGrounded, false)
-	actor.Parent = collider
-
-	collider.Parent = playerFolder
-
-	player.ReplicationFocus = collider
-end
-
-function Simulation.DestroyCharacter(player: Player)
-	local _, collider = Simulation.GetCharacter(player)
-	if collider then
-		collider:Destroy()
+	local offset = Vector3.new(b.Position.X - a.Position.X, 0, b.Position.Z - a.Position.Z)
+	local distance = offset.Magnitude
+	local penetration = BODY_RADIUS * 2 - distance
+	if penetration <= SEPARATION_TOLERANCE then
+		return
 	end
-end
-
-function Simulation.GetCharacter(player: Player): (Attachment?, Part?)
-	local collider = playerFolder:FindFirstChild(
-		Config.Collider.Prefix .. tostring(player.UserId)
-	)
-	if not collider or not collider:IsA("Part") then
-		return nil, nil
-	end
-
-	local actor = collider:FindFirstChild(Config.ActorName)
-	return if actor and actor:IsA("Attachment") then actor else nil, collider
-end
-
-local function enableCharacterPrediction(collider: Part)
-	RunService:SetPredictionMode(collider, Enum.PredictionMode.On)
-
-	local actor = collider:WaitForChild(Config.ActorName)
-	assert(actor:IsA("Attachment"), "Actor must be an Attachment")
-	RunService:SetPredictionMode(actor, Enum.PredictionMode.On)
-end
-
-function Simulation.Client()
-	local player = Players.LocalPlayer
-	local localCollider = playerFolder:WaitForChild(
-		Config.Collider.Prefix .. tostring(player.UserId)
-	)
-	assert(localCollider:IsA("Part"), "Local Collider must be a Part")
-
-	-- only the owner predicts this collider assembly
-	enableCharacterPrediction(localCollider)
-
-	local camera = workspace.CurrentCamera
-	assert(camera, "Workspace.CurrentCamera must exist")
-	camera.CameraType = Enum.CameraType.Scriptable
-	camera.FieldOfView = Config.Camera.FieldOfView
-
-	local viewVector = Vector2.new()
-	UserInputService.InputChanged:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseMovement then
-			viewVector -= Vector2.new(input.Delta.X, input.Delta.Y)
-				* Config.Camera.MouseSensitivity
-			viewVector = Vector2.new(
-				viewVector.X,
-				math.clamp(
-					viewVector.Y,
-					Config.Camera.MinimumPitch,
-					Config.Camera.MaximumPitch
-				)
-			)
-		end
-	end)
-
-	-- camera follows at render rate without moving gameplay state
-	RunService:BindToRenderStep(
-		"CameraMove",
-		Enum.RenderPriority.Camera.Value - 1,
-		function()
-			camera.CFrame = CFrame.new(localCollider.Position)
-				* CFrame.fromEulerAngles(
-					viewVector.Y,
-					viewVector.X,
-					0,
-					Enum.RotationOrder.YXZ
-				)
-				* CFrame.new(Config.Camera.Offset)
-		end
-	)
+	-- Pairs are UserId-sorted, so coincident bodies always choose the same sign.
+	local normal = if distance > 0.000001 then offset / distance else Vector3.xAxis
+	local half = penetration * 0.5
+	local oldA, oldB = a.Position, b.Position
+	a.Position = sweep(oldA, -normal * half)
+	b.Position = sweep(oldB, normal * half)
+	local acceptedA = math.clamp((oldA - a.Position):Dot(normal), 0, half)
+	local acceptedB = math.clamp((b.Position - oldB):Dot(normal), 0, half)
+	-- Let the free body absorb separation rejected by the other body's world sweep.
+	a.Position = sweep(a.Position, -normal * (half - acceptedB))
+	b.Position = sweep(b.Position, normal * (half - acceptedA))
 end
 
 function Simulation.Step(deltaTime: number)
-	for _, player in Players:GetPlayers() do
-		if not IS_SERVER and player ~= Players.LocalPlayer then
+	local players = Players:GetPlayers()
+	table.sort(players, function(a, b)
+		return a.UserId < b.UserId
+	end)
+	local bodies: { Body } = {}
+	for _, player in players do
+		local actor = getActor(player)
+		if not actor then
 			continue
 		end
-
-		local inputs = Input.GetInputs(player)
-		local actor, collider = Simulation.GetCharacter(player)
-		if not inputs or not actor or not collider then
-			continue
+		local velocity = actor:GetAttribute(Config.Attributes.Velocity)
+		local moveVector = actor:GetAttribute(Config.Attributes.MoveVector)
+		if typeof(velocity) ~= "Vector3" or typeof(moveVector) ~= "Vector3" then
+			continue -- Wait for initial predicted state to arrive.
 		end
+		local body: Body = {
+			Player = player,
+			Actor = actor,
+			Position = actor.CFrame.Position,
+			Rotation = actor.CFrame.Rotation,
+			Velocity = velocity,
+			MoveVector = moveVector,
+		}
+		if IS_SERVER or player == Players.LocalPlayer then
+			if not computeMovement(body, deltaTime) then
+				continue
+			end
+		end
+		table.insert(bodies, body)
+	end
 
-		local rawInputDirection =
-			inputs.Movement:GetState() :: Vector2
+	-- All movement is ready before any unique pair is separated.
+	for _ = 1, 2 do
+		for i = 1, #bodies - 1 do
+			for j = i + 1, #bodies do
+				resolvePair(bodies[i], bodies[j])
+			end
+		end
+	end
 
-		-- camera state is synced through server authority
-		local cameraLook = player:GetCameraState().CFrame.LookVector
-			* Vector3.new(1, 0, 1)
-		cameraLook = if cameraLook.Magnitude > 0
-			then cameraLook.Unit
-			else Vector3.new(0, 0, -1)
-
-		local cameraDirection = CFrame.lookAt(
-			Vector3.zero,
-			cameraLook,
-			Vector3.yAxis
-		)
-		local moveVector = cameraDirection:VectorToWorldSpace(
-			Vector3.new(
-				rawInputDirection.X,
-				0,
-				-rawInputDirection.Y
-			)
-		)
-		actor:SetAttribute(
-			Config.Attributes.MoveVector,
-			moveVector
-		)
-
-		collider.CFrame = CFrame.new(
-			collider.Position
-				+ moveVector
-					* Config.MoveSpeed
-					* deltaTime
-		) * cameraDirection.Rotation
-
-		-- held jump can fire again once the collider is grounded
-		local groundCast = Simulation.GroundCast(collider)
-		local grounded = groundCast ~= nil
+	for _, body in bodies do
+		local actor = body.Actor
+		if not IS_SERVER and body.Player ~= Players.LocalPlayer
+			and body.Position == actor.CFrame.Position then
+			continue -- Do not rewrite untouched remote state.
+		end
+		local grounded = body.Velocity.Y <= 0 and isGrounded(body.Position)
+		if grounded then
+			body.Velocity = Vector3.new(body.Velocity.X, 0, body.Velocity.Z)
+		end
+		if IS_SERVER or body.Player == Players.LocalPlayer then
+			actor:SetAttribute(Config.Attributes.MoveVector, body.MoveVector)
+		end
 		actor:SetAttribute(Config.Attributes.IsGrounded, grounded)
-
-		local jumpPressed = inputs.Jump:GetState() :: boolean
-		if grounded and jumpPressed then
-			local velocity = collider.AssemblyLinearVelocity
-			collider.AssemblyLinearVelocity = Vector3.new(
-				velocity.X,
-				Config.JumpVelocity,
-				velocity.Z
-			)
-		end
+		actor:SetAttribute(Config.Attributes.Velocity, body.Velocity)
+		actor.CFrame = CFrame.new(body.Position) * body.Rotation
 	end
 end
 
 function Simulation.Setup()
 	if IS_SERVER then
 		Players.CharacterAutoLoads = false
-
-		local baseplate = ReplicatedStorage
-			:WaitForChild(Config.BaseplateAssetName)
-			:Clone()
-		baseplate.Parent = workspace
-
-		local players = workspace:FindFirstChild(Config.PlayersFolderName)
-		if not players then
-			players = Instance.new("Folder")
-			players.Name = Config.PlayersFolderName
-			players.Parent = workspace
+		local folder = workspace:FindFirstChild(Config.PlayersFolderName)
+		if not folder then
+			folder = Instance.new("Folder")
+			folder.Name = Config.PlayersFolderName
+			folder.Parent = workspace
 		end
-		assert(players:IsA("Folder"), "Workspace.Players must be a Folder")
-		playerFolder = players
-
-		Players.PlayerAdded:Connect(Simulation.CreateCharacter)
-		Players.PlayerRemoving:Connect(Simulation.DestroyCharacter)
-		for _, player in Players:GetPlayers() do
-			Simulation.CreateCharacter(player)
+		assert(folder:IsA("Folder"))
+		actors = folder
+		local function create(player: Player)
+			if getActor(player) then return end
+			local actor = Instance.new("Attachment")
+			actor.Name = Config.ActorPrefix .. player.UserId
+			-- SpawnPart top is Y=1; keep the virtual box clear of initial overlap.
+			actor.CFrame = CFrame.new(spawnSlot * Config.SpawnSpacing, 1 + SIZE.Y / 2 + SKIN, 0)
+			spawnSlot += 1
+			actor:SetAttribute(Config.Attributes.UserId, player.UserId)
+			actor:SetAttribute(Config.Attributes.MoveVector, Vector3.zero)
+			actor:SetAttribute(Config.Attributes.IsGrounded, false)
+			actor:SetAttribute(Config.Attributes.Velocity, Vector3.zero)
+			actor.Parent = actors
 		end
+		Players.PlayerAdded:Connect(create)
+		Players.PlayerRemoving:Connect(function(player)
+			local actor = getActor(player)
+			if actor then actor:Destroy() end
+		end)
+		for _, player in Players:GetPlayers() do create(player) end
 	else
-		local players = workspace:WaitForChild(Config.PlayersFolderName)
-		assert(players:IsA("Folder"), "Workspace.Players must be a Folder")
-		playerFolder = players
-
-		Simulation.Client()
-		local Presentation = require(script.Parent.Presentation)
-		Presentation.Setup(playerFolder)
+		local folder = workspace:WaitForChild(Config.PlayersFolderName)
+		assert(folder:IsA("Folder"))
+		actors = folder
+		local function predict(instance: Instance)
+			if instance:IsA("Attachment") then
+				RunService:SetPredictionMode(instance, Enum.PredictionMode.On)
+			end
+		end
+		actors.ChildAdded:Connect(predict)
+		for _, actor in actors:GetChildren() do predict(actor) end
+		require(script.Parent.Presentation).Setup(actors)
 	end
-
-	RunService:BindToSimulation(
-		Simulation.Step,
-		Config.SimulationFrequency,
-		Config.SimulationPriority
-	)
+	params.ExcludeInstances = { actors }
+	RunService:BindToSimulation(Simulation.Step, Config.SimulationFrequency, Config.SimulationPriority)
 end
 
 return table.freeze(Simulation)

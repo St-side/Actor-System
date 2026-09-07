@@ -1,13 +1,13 @@
 --!strict
 
-local Input = require(script.Input)
-local Simulation = require(script.Simulation)
+local Environment = require(script.Environment)
 
 local Actor = {}
 
 function Actor.Setup()
-	Input.Setup()
-	Simulation.Setup()
+	Environment.Setup()
+	require(script.Input).Setup()
+	require(script.Simulation).Setup()
 end
 
 return table.freeze(Actor)

@@ -1,213 +1,86 @@
 --!strict
-
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-
-local Animation = require(script.Parent.Animation)
+local UserInputService = game:GetService("UserInputService")
 local Config = require(script.Parent.Config)
+local Animation = require(script.Parent.Animation)
 
--- authored rig root sits slightly above the collider center
-local RIG_ROOT_OFFSET = CFrame.new(0, 0.36, 0)
-
-type PresentationRecord = {
+type Record = {
 	Rig: Model,
 	Animation: Animation.Record,
-	IsLocal: boolean,
 }
-
 local Presentation = {}
-local records: { [Attachment]: PresentationRecord } = {}
-local started = false
 
-local function getOrCreateFolder(parent: Instance, name: string): Folder
-	local folder = parent:FindFirstChild(name)
-	if folder then
-		assert(folder:IsA("Folder"), name .. " must be a Folder")
-		return folder
-	end
-
-	folder = Instance.new("Folder")
-	folder.Name = name
-	folder.Parent = parent
-	return folder
-end
-
-local function actorUserId(actor: Attachment): number?
-	local userId = actor:GetAttribute(Config.Attributes.UserId)
-	return if typeof(userId) == "number" then userId else nil
-end
-
-local function configureRig(rig: Model)
-	local root = rig.PrimaryPart
-	assert(root, "PresentationRig must have a BasePart PrimaryPart")
-
-	for _, descendant in rig:GetDescendants() do
-		if descendant:IsA("BasePart") then
-			descendant.Anchored = descendant == root
-			descendant.CanCollide = false
-			descendant.CanQuery = false
-			descendant.CanTouch = false
-			descendant.Massless = descendant ~= root
-		end
-	end
-end
-
-local function presentationCFrame(
-	actor: Attachment,
-	record: PresentationRecord,
-	position: Vector3
-): CFrame
-	-- remote rigs use the facing synchronized on Actor
-	if not record.IsLocal then
-		return CFrame.new(position)
-			* actor.WorldCFrame.Rotation
-			* RIG_ROOT_OFFSET
-	end
-
-	-- local rig follows render-rate camera yaw
+function Presentation.Setup(actors: Folder)
+	local visuals = Instance.new("Folder")
+	visuals.Name = Config.Presentation.FolderName
+	visuals.Parent = workspace
+	local template = ReplicatedStorage:WaitForChild(Config.Presentation.RigAssetName)
+	assert(template:IsA("Model"))
+	local records: { [Attachment]: Record } = {}
 	local camera = workspace.CurrentCamera
-	if not camera then
-		return actor.WorldCFrame * RIG_ROOT_OFFSET
-	end
-
-	local look =
-		camera.CFrame.LookVector * Vector3.new(1, 0, 1)
-
-	if look.Magnitude == 0 then
-		look =
-			actor.WorldCFrame.LookVector
-			* Vector3.new(1, 0, 1)
-
-		if look.Magnitude == 0 then
-			look = Vector3.new(0, 0, -1)
+	assert(camera)
+	camera.CameraType = Enum.CameraType.Scriptable
+	camera.FieldOfView = Config.Camera.FieldOfView
+	local view = Vector2.zero
+	UserInputService.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			view -= Vector2.new(input.Delta.X, input.Delta.Y) * Config.Camera.MouseSensitivity
+			view = Vector2.new(view.X, math.clamp(view.Y, Config.Camera.MinimumPitch, Config.Camera.MaximumPitch))
 		end
-	end
-
-	return CFrame.new(position)
-		* CFrame.lookAt(
-			Vector3.zero,
-			look.Unit,
-			Vector3.yAxis
-		)
-		* RIG_ROOT_OFFSET
-end
-
-local function createRig(
-	actor: Attachment,
-	presentationFolder: Folder
-)
-	if records[actor] then
-		return
-	end
-
-	local template =
-		ReplicatedStorage:FindFirstChild(
-			Config.Presentation.RigAssetName
-		)
-
-	assert(
-		template and template:IsA("Model"),
-		"PresentationRig must be a Model"
-	)
-
-	local userId = actorUserId(actor)
-	assert(userId, "Actor must have a UserId")
-
-	local rig = template:Clone()
-	rig.Name = "Rig_" .. userId
-
-	configureRig(rig)
-	rig.Parent = presentationFolder
-
-	local record: PresentationRecord = {
-		Rig = rig,
-		Animation = Animation.Create(rig),
-		IsLocal = userId == Players.LocalPlayer.UserId,
-	}
-
-	rig:PivotTo(
-		presentationCFrame(actor, record, actor.WorldPosition)
-	)
-	records[actor] = record
-end
-
-local function removeRig(actor: Attachment)
-	local record = records[actor]
-	if record then
-		Animation.Destroy(record.Animation)
-		record.Rig:Destroy()
-		records[actor] = nil
-	end
-end
-
-function Presentation.Setup(playerFolder: Folder)
-	if started then
-		return
-	end
-	started = true
-
-	local presentationFolder = getOrCreateFolder(
-		workspace,
-		Config.Presentation.FolderName
-	)
-
-	local function addCollider(collider: Instance)
-		if not collider:IsA("Part") then
-			return
-		end
-
-		local actor =
-			collider:FindFirstChild(Config.ActorName)
-
+	end)
+	RunService:BindToRenderStep("CameraMove", Enum.RenderPriority.Camera.Value - 1, function()
+		local actor = actors:FindFirstChild(Config.ActorPrefix .. Players.LocalPlayer.UserId)
 		if actor and actor:IsA("Attachment") then
-			createRig(actor, presentationFolder)
-		end
-	end
-
-	for _, collider in playerFolder:GetChildren() do
-		addCollider(collider)
-	end
-
-	playerFolder.ChildAdded:Connect(addCollider)
-
-	playerFolder.ChildRemoved:Connect(function(collider)
-		if not collider:IsA("Part") then
-			return
-		end
-
-		local actor =
-			collider:FindFirstChild(Config.ActorName)
-
-		if actor and actor:IsA("Attachment") then
-			removeRig(actor)
+			camera.CFrame = CFrame.new(actor.WorldPosition)
+				* CFrame.fromEulerAngles(view.Y, view.X, 0, Enum.RotationOrder.YXZ)
+				* CFrame.new(Config.Camera.Offset)
 		end
 	end)
 
-	RunService:BindToRenderStep(
-		"ActorLabPresentation",
-		Enum.RenderPriority.Last.Value,
-		function()
-			for actor, record in records do
-				if not actor:IsDescendantOf(playerFolder) then
-					removeRig(actor)
-					continue
+	RunService:BindToRenderStep("ActorLabPresentation", Enum.RenderPriority.Last.Value, function()
+		-- Retry incomplete streamed attributes; no gameplay state is written here.
+		for _, instance in actors:GetChildren() do
+			if not instance:IsA("Attachment") then continue end
+			local userId = instance:GetAttribute(Config.Attributes.UserId)
+			if typeof(userId) ~= "number" then continue end
+			local record = records[instance]
+			if not record then
+				local rig = template:Clone()
+				rig.Name = "Rig_" .. userId
+				assert(rig.PrimaryPart)
+				for _, part in rig:GetDescendants() do
+					if part:IsA("BasePart") then
+						part.Anchored = part == rig.PrimaryPart
+						part.Massless = true
+						part.CanCollide = false
+						part.CanQuery = false
+						part.CanTouch = false
+					end
 				end
-
-				local collider = actor.Parent
-				if not collider or not collider:IsA("BasePart") then
-					continue
-				end
-
-				local position = actor.WorldPosition
-				record.Rig:PivotTo(
-					presentationCFrame(actor, record, position)
-				)
-
-				Animation.Update(record.Animation, actor, collider)
+				rig.Parent = visuals
+				record = {
+					Rig = rig,
+					Animation = Animation.Create(rig),
+				}
+				records[instance] = record
+			end
+			local rotation = instance.WorldCFrame.Rotation
+			if userId == Players.LocalPlayer.UserId then
+				rotation = CFrame.fromEulerAngles(0, view.X, 0, Enum.RotationOrder.YXZ)
+			end
+			record.Rig:PivotTo(CFrame.new(instance.WorldPosition) * rotation * CFrame.new(0, 0.36, 0))
+			Animation.Update(record.Animation, instance)
+		end
+		for actor, record in records do
+			if actor.Parent ~= actors then
+				Animation.Destroy(record.Animation)
+				record.Rig:Destroy()
+				records[actor] = nil
 			end
 		end
-	)
+	end)
 end
 
 return table.freeze(Presentation)
