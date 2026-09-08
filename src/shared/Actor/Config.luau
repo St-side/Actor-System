@@ -20,6 +20,7 @@ local Config = {
 	Presentation = table.freeze({
 		FolderName = "_ActorPresentation",
 		RigAssetName = "PresentationRig",
+		RemotePositionSmoothTime = 0.045, -- Experimental cosmetic X/Y/Z response time in seconds.
 	}),
 
 	Camera = table.freeze({
