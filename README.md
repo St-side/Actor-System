@@ -95,6 +95,7 @@ If a rollback restored the position but left velocity from a newer simulation st
 
 Keeping important simulation state on the predicted Actor allows Roblox to restore the character to an earlier state before replaying simulation.
 
+
 ### Re-simulation
 
 Movement runs through `BindToSimulation`, so the same simulation code can run during normal prediction and during Server Authority re-simulation.
@@ -145,6 +146,27 @@ Other clients
 ```
 
 Movement input comes from Roblox `InputAction` state rather than custom movement RemoteEvents.
+
+## Presentation Smoothing
+
+The Actor remains the gameplay and collision truth. The visible R15 rig is client-only Presentation.
+
+```text
+Local:
+Predicted Actor → Visual Rig
+
+Remote:
+Predicted / synchronized Actor
+→ small XYZ SmoothDamp
+→ Visual Rig
+```
+
+Local characters follow predicted state directly for immediate responsiveness. Remote rigs use a small positional `SmoothDamp` to hide visual stepping between simulation/network updates and rendered frames.
+
+Rotation remains direct, and smoothing never feeds back into simulation or collision.
+
+The current remote smoothing time is `0.04`.
+
 
 ### Why some state should not be local Lua state
 
